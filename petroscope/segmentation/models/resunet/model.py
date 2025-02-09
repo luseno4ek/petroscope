@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 from petroscope.utils import logger
 from petroscope.utils.lazy_imports import torch, nn, optim  # noqa
 
+import matplotlib.pyplot as plt 
+from PIL import Image
+import math
 
 class ResUNetTorch(GeoSegmModel):
 
@@ -258,6 +261,7 @@ class ResUNetTorch(GeoSegmModel):
     def predict_image(
         self,
         image: ndarray,
+        exp_name = None, image_name = None, build_entropy = False,        
         retutn_logits: bool = True,
     ) -> ndarray:
         """
@@ -289,7 +293,46 @@ class ResUNetTorch(GeoSegmModel):
                 .permute(0, 3, 1, 2)
                 .to(self.device)
             )
-            prediction = self.model(p)
+
+            prediction, radius = self.model(p, exp_name, image_name, build_entropy)
+
+            if build_entropy:
+                squeezed_p = torch.sigmoid(torch.squeeze(prediction))
+                # print(torch.max(squeezed_p), torch.min(squeezed_p))
+                # print("Shape of img = ", p.shape, " Shape of prediction = ", squeezed_p.shape)
+                pixel_entropy = self.compute_pixel_entropy(squeezed_p).detach().cpu()
+                # print("Shape of pixel entropy = ", pixel_entropy.shape)
+                count = torch.ones(
+                    (1, 1, squeezed_p.shape[1], squeezed_p.shape[2]), dtype=torch.float32
+                )
+                prediction_uncertainty = pixel_entropy / count  # [1, 1, h, w]
+                prediction_uncertainty = self.normalize_map(prediction_uncertainty)
+                prediction_uncertainty = prediction_uncertainty.squeeze(dim=0).squeeze(dim=0)
+                # print(torch.max(prediction_uncertainty), torch.min(prediction_uncertainty))
+                img = prediction_uncertainty.cpu().numpy()
+                img = np.squeeze(img)
+                plt.imshow(img)
+                plt.axis('off')
+                path = f"./out/{exp_name}/entropy"
+                Path(path).mkdir(parents=True, exist_ok=True)
+                plt.savefig(f"{path}/{image_name}_normalized.png", bbox_inches='tight') 
+                # print("Final entropy shape = ", img.shape)
+                np.save(f"{path}/{image_name}_normalized_raw.npy", img)
+
+                path = f"./out/{exp_name}/entropy_radius_map"
+                Path(path).mkdir(parents=True, exist_ok=True)
+                entropy = img
+                img_r = Image.fromarray(radius)
+                radius_upscaled = img_r.resize((entropy.shape[1], entropy.shape[0]))
+                radius_upscaled = np.array(radius_upscaled)
+                radius_upscaled = self.normalize_map(radius_upscaled)
+                entropy = self.normalize_map(entropy)
+                product = radius_upscaled * entropy
+                plt.imshow(product)            
+                plt.axis('off')
+                plt.savefig(f"{path}/{image_name}.png", bbox_inches='tight')
+                np.save(f"{path}/{image_name}_raw.npy", product)
+
             prediction = torch.sigmoid(prediction)
             if retutn_logits:
                 prediction = prediction.squeeze().permute([1, 2, 0])
@@ -300,6 +343,16 @@ class ResUNetTorch(GeoSegmModel):
 
         prediction = prediction[:h, :w, ...]
         return prediction
+
+    def normalize_map(self, x):
+        return (x - x.min().item()) / (x.max().item() - x.min().item())
+
+
+    def compute_pixel_entropy(self, p):
+        pixel_entropy = torch.sum(-p * torch.log(p + 1e-6), dim=0).unsqueeze(
+            dim=0
+        ).unsqueeze(dim=0) / math.log(19)
+        return pixel_entropy
 
     def predict_image_with_shift(
         self, image: ndarray, shift: int = 192

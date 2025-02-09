@@ -34,7 +34,7 @@ class UnitsFormatter:
         )(size)
 
 
-def prepare_experiment(out_path: Path) -> Path:
+def prepare_experiment(out_path: Path, exp_name = None) -> Path:
     out_path.mkdir(parents=True, exist_ok=True)
     dirs = list(out_path.iterdir())
     dirs = [d for d in dirs if d.name.startswith("exp-")]
@@ -44,6 +44,9 @@ def prepare_experiment(out_path: Path) -> Path:
         else 1
     )
     t = datetime.now()
-    exp_path = out_path / f"exp-{experiment_id:03}_{t:%Y-%m-%d_%H-%M}"
-    exp_path.mkdir()
+    if (exp_name is not None): 
+        exp_path = out_path / exp_name
+    else:
+        exp_path = out_path / f"exp-{experiment_id:03}_{t:%Y-%m-%d_%H-%M}"
+    exp_path.mkdir(exist_ok=True, parents=True)
     return exp_path

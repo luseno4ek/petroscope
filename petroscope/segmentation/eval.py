@@ -220,6 +220,7 @@ class SegmDetailedTester:
         predict_func,
         description: str,
         return_void: bool = True,
+        exp_name: str = None
     ) -> SegmMetrics:
         sub_dir = self.out_dir / description
         sub_dir.mkdir(exist_ok=True, parents=True)
@@ -233,7 +234,7 @@ class SegmDetailedTester:
                 classes=self.classes,
                 one_hot=True,
             )
-            pred = predict_func(img)
+            pred = predict_func(img, exp_name, name, '_' not in name)
             void = void_borders(
                 mask, border_width=self.void_w, pad=self.void_pad
             )
