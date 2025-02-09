@@ -428,6 +428,8 @@ class SegmVisualizer:
         mask_gt_squeezed: bool = False,
         mask_pred_squeezed: bool = False,
         show_legend: bool = True,
+        out_dir:Path = None,
+        img_name:str = None
     ):
         """
         Visualizes the comparison between ground truth and predicted
@@ -483,6 +485,16 @@ class SegmVisualizer:
             return_image=False,
         )
 
+        correct_colored_img = SegmVisualizer.colorize_mask(
+            correct,
+            values_to_colors={
+                0: (244, 67, 54),
+                1: (76, 175, 80),
+                255: (0, 0, 255),  # void color
+            },
+            return_image=True,
+        )
+        correct_colored_img.save(out_dir / f"{img_name}_err.jpg")
         error_overlay = SegmVisualizer.highlight_mask_np(
             source, (mask_gt != mask_pred).astype(np.uint8) * void_mask
         )

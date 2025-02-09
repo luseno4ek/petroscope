@@ -205,6 +205,8 @@ class SegmDetailedTester:
             void_mask=void_mask,
             mask_gt_squeezed=True,
             mask_pred_squeezed=True,
+            out_dir=out_dir,
+            img_name=img_name
         )
         composite_vis.save(out_dir / f"{img_name}_composite.jpg", quality=95)
 
