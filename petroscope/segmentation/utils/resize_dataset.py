@@ -31,10 +31,13 @@ def resize(
 
 if __name__ == "__main__":
 
-    ds_dir = Path("/mnt/c/dev/LumenStone/S1_v1")
-    ds_dir_out = Path("/mnt/c/dev/LumenStone/S1_v1_x05")
+    ds_dir = Path("./data/blue")
+    ds_dir_out = Path("./data/blue_x05")
 
-    samples = "train", "test"
+    samples = [
+        #"train", 
+        "test"
+    ]
 
     for sample in samples:
 

@@ -56,7 +56,7 @@ def run_test(
     saves results to output directory.
     """
     classes = segm.LumenStoneClasses.S1v1()
-    model = segm.models.ResUNetTorch.trained("s1_x05", device)
+    model = segm.models.ResUNetTorch.trained("s1_x05_calib", device)
     tester = segm.SegmDetailedTester(
         out_dir=out_dir,
         classes=classes,
@@ -144,6 +144,27 @@ def get_test_error_radius_pairs(ds_dir: Path):
 def normalize_map(x):
     return (x - x.min().item()) / (x.max().item() - x.min().item())
 
+def weighted_mean(values, weights):
+    return np.sum(weights * values) / np.sum(weights)
+
+def weighted_covariance(X, Y, weights):
+    mean_x = weighted_mean(X, weights)
+    mean_y = weighted_mean(Y, weights)
+    weighted_cov = np.sum(weights * (X - mean_x) * (Y - mean_y)) / np.sum(weights)
+    return weighted_cov
+
+def weighted_variance(values, weights):
+    mean_val = weighted_mean(values, weights)
+    weighted_var = np.sum(weights * (values - mean_val) ** 2) / np.sum(weights)
+    return weighted_var
+
+def weighted_correlation(X, Y, weights):
+    cov_xy = weighted_covariance(X, Y, weights)
+    var_x = weighted_variance(X, weights)
+    var_y = weighted_variance(Y, weights)
+    weighted_corr = cov_xy / np.sqrt(var_x * var_y)
+    return weighted_corr
+
 def get_radius_error_correlation(
         ds_dir, exp_name, shape = (2560, 3408), shape_small = (2547, 3396), normalize_radius_map = False, normalize_result_vectors = False):
     mineral_sq_err_dict = defaultdict(list)
@@ -156,7 +177,7 @@ def get_radius_error_correlation(
 
     for pair in path_pairs:
         name = pair[0].stem
-        mask_path = f"{ds_dir}\\masks\\test\\{name.split('_')[0]}.png"
+        mask_path = f"{ds_dir}/masks/test/{name.split('_')[0]}.png"
         mask = cv2.imread(mask_path)
         mask = mask[:, :, 0]
         error = np.load(pair[0]).reshape(shape_small)
@@ -195,7 +216,15 @@ def get_radius_error_correlation(
         for k, v in mineral_radius_dict.items()
     }
 
-    return mineral_mse_dict, mineral_correlation_dict
+    mineral_weighted_correlation_dict = {
+        minerals_idx_name_dict[int(k)]  : 
+        round(float(
+            weighted_correlation(np.concatenate(v), np.concatenate(mineral_error_dict[k]), np.concatenate(mineral_error_dict[k])**2)
+                ), 5) 
+        for k, v in mineral_radius_dict.items()
+    }
+
+    return mineral_mse_dict, mineral_correlation_dict, mineral_weighted_correlation_dict
 
 if __name__ == "__main__":
 
@@ -208,8 +237,11 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    exp_name = 'S1_v1_yellow_colordrift_10'
-    ds_dir=Path("./data/blue")
+    shape = (1280, 1712)
+    shape_small = (1273, 1698)
+
+    exp_name = 'S1_v1_yellowx05_calib_colordrift_10_s1x05calib'
+    ds_dir=Path("./data/yellow_x05")
 
     run_test(
         ds_dir=ds_dir,
@@ -220,16 +252,11 @@ if __name__ == "__main__":
 
     plot_error_heatmaps(ds_dir=ds_dir, exp_name=exp_name, h=10)
 
-    mse_dict, correlation_dict = get_radius_error_correlation(ds_dir, exp_name)
+    mse_dict, correlation_dict, weighted_correlation_dict = get_radius_error_correlation(ds_dir, exp_name, shape=shape, shape_small=shape_small)
     print("Not normalized radius map \n MSE = ", mse_dict, "\n Correlation = ", correlation_dict)
     with open(f'./out/{exp_name}/correlation_dict.json', 'wt') as f:
         json.dump(correlation_dict, f, indent=4)
     with open(f'./out/{exp_name}/mse_dict.json', 'wt') as f:
-            json.dump(mse_dict, f, indent=4)
-
-    mse_dict_norm, correlation_dict_norm = get_radius_error_correlation(ds_dir, exp_name, normalize_radius_map=True)
-    print("Normalized radius map\n MSE = ", mse_dict, "\n Correlation = ", correlation_dict)
-    with open(f'./out/{exp_name}/correlation_normalized_dict.json', 'wt') as f:
-        json.dump(correlation_dict_norm, f, indent=4)
-    with open(f'./out/{exp_name}/mse_normalized_dict.json', 'wt') as f:
-        json.dump(mse_dict_norm, f, indent=4)
+        json.dump(mse_dict, f, indent=4)
+    with open(f'./out/{exp_name}/weighted_correlation_dict.json', 'wt') as f:
+        json.dump(weighted_correlation_dict, f, indent=4)
