@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator
 
 import numpy as np
-from numpy import ndarray
+import requests
 from tqdm import tqdm
 
 from petroscope.segmentation.eval import SegmDetailedTester
@@ -26,10 +26,15 @@ import math
 class ResUNetTorch(GeoSegmModel):
 
     MODEL_REGISTRY = {
-        "s1": "weights/resunet/s1.pth",
-        "s1_x05": "weights/resunet/s1_x05.pth",
-        "s1_x05_calib": "weights/resunet/s1_x05_calib.pth",
+        "s1_x05": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05.pth",
+        "s1_x05_e5": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05_e5.pth",
+        "s1_x05_e10": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05_e10.pth",
+        "s1_x05_calib": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05_calib.pth",
+        "s1_x05_calib_e5": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05_calib_e5.pth",
+        "s1_x05_calib_e10": "http://www.xubiker.online/petroscope/segmentation_weights/resunet_s1_x05_calib_e10.pth",
     }
+
+    CACHE_DIR = Path.home() / ".petroscope" / "models"
 
     @dataclass
     class TestParams:
@@ -53,6 +58,30 @@ class ResUNetTorch(GeoSegmModel):
             n_classes=n_classes, n_layers=layers, start_filters=filters
         ).to(self.device)
 
+    @staticmethod
+    def download_weights(url: str, save_path: Path, chunk_size: int = 1024):
+        """Download model weights with a progress bar."""
+        response = requests.get(url, stream=True, verify=False)
+        total_size = int(
+            response.headers.get("content-length", 0)
+        )  # Get total file size
+
+        with (
+            open(save_path, "wb") as file,
+            tqdm(
+                desc=f"Downloading {save_path.name}",
+                total=total_size,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as progress_bar,
+        ):
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                file.write(chunk)
+                progress_bar.update(len(chunk))
+
+        logger.success(f"Download complete: {save_path}")
+
     @classmethod
     def trained(cls, weights_name: str, device: str) -> "ResUNetTorch":
         """Load a trained model from the registry, restoring hyperparameters automatically."""
@@ -61,9 +90,17 @@ class ResUNetTorch(GeoSegmModel):
                 f"Unknown model version '{weights_name}'. Available: {list(cls.MODEL_REGISTRY.keys())}"
             )
 
+        weights_url = cls.MODEL_REGISTRY[weights_name]
         weights_path = (
-            Path(__file__).parent.parent / cls.MODEL_REGISTRY[weights_name]
+            Path.home() / ".cache" / "petroscope" / f"{weights_name}.pth"
         )
+        weights_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Download if not available
+        if not weights_path.exists():
+            logger.info(f"Downloading weights for {weights_name}...")
+            cls.download_weights(weights_url, weights_path)
+
         checkpoint = torch.load(weights_path, map_location=device)
 
         # Extract architecture hyperparameters from checkpoint
@@ -216,12 +253,12 @@ class ResUNetTorch(GeoSegmModel):
 
     def predict_image_per_patches(
         self,
-        image: ndarray,
+        image: np.ndarray,
         patch_s: int,
         batch_s: int,
         conv_pad: int,
         patch_overlay: int | float,
-    ) -> ndarray:
+    ) -> np.ndarray:
         from petroscope.segmentation.utils.data import (
             combine_from_patches,
             split_into_patches,
@@ -263,7 +300,7 @@ class ResUNetTorch(GeoSegmModel):
         image: ndarray,
         exp_name = None, image_name = None, build_entropy = False,        
         retutn_logits: bool = True,
-    ) -> ndarray:
+    ) -> np.ndarray:
         """
         Predicts the segmentation of a given image.
 
@@ -355,8 +392,8 @@ class ResUNetTorch(GeoSegmModel):
         return pixel_entropy
 
     def predict_image_with_shift(
-        self, image: ndarray, shift: int = 192
-    ) -> ndarray:
+        self, image: np.ndarray, shift: int = 192
+    ) -> np.ndarray:
         h, w = image.shape[:2]
         q = 16
         if h % q != 0:
