@@ -49,14 +49,18 @@ def run_test(
     void_border_width=2,
     vis_segmentation=True,
     vis_plots=False,
-    exp_name: str = None
+    exp_name: str = None,
+    model_name: str = "s1_resnet18_x05_calib"
 ):
     """
     Runs model on test images from dataset directory and
     saves results to output directory.
     """
     classes = segm.LumenStoneClasses.S1v1()
-    model = segm.models.ResUNetTorch.trained("s1_x05_calib", device)
+    # create the model (PSPNetTorch or ResUnetTorch) and load weights
+    # model = segm.models.PSPNetTorch.trained(model_name, device)
+    model = segm.models.ResUNetTorch.trained(model_name, device)
+
     tester = segm.SegmDetailedTester(
         out_dir=out_dir,
         classes=classes,
@@ -131,12 +135,14 @@ def plot_error_heatmaps(ds_dir, exp_name, h = 10):
             error_masks += [img]
         plot_error_heatmap(error_masks, exp_name=exp_name, image_name=name)
 
-def get_test_error_radius_pairs(ds_dir: Path):
+def get_test_error_radius_pairs(ds_dir: Path, use_only_entory = False, use_only_radius = False):
     """
     Get paths to test images and corresponding masks from dataset directory.
     """
+    dir_name = "entropy_radius_map" if not use_only_entory else "entropy"
+    dir_name = "entropy_radius_map" if not use_only_radius else "radius"
     test_img_mask_p = [
-        (img_p, ds_dir / "entropy_radius_map" / f"{img_p.stem}.npy")
+        (img_p, ds_dir / dir_name / (f"{img_p.stem}.npy" if not use_only_entory else f"{img_p.stem.split('_')[0]}_normalized_raw.npy"))
         for img_p in sorted((ds_dir / "error_heatmap" ).iterdir()) if '_raw' in img_p.stem
     ]
     return test_img_mask_p
@@ -166,14 +172,16 @@ def weighted_correlation(X, Y, weights):
     return weighted_corr
 
 def get_radius_error_correlation(
-        ds_dir, exp_name, shape = (2560, 3408), shape_small = (2547, 3396), normalize_radius_map = False, normalize_result_vectors = False):
+        ds_dir, exp_name, shape = (2560, 3408), shape_small = (2547, 3396), 
+        normalize_radius_map = False, normalize_result_vectors = False,
+        use_only_entory = False, use_only_radius = False):
     mineral_sq_err_dict = defaultdict(list)
     mineral_radius_dict = defaultdict(list)
     mineral_error_dict = defaultdict(list)
 
     path = Path(f"./out/{exp_name}")
 
-    path_pairs = get_test_error_radius_pairs(path)
+    path_pairs = get_test_error_radius_pairs(path, use_only_entory, use_only_radius)
 
     for pair in path_pairs:
         name = pair[0].stem
@@ -185,7 +193,11 @@ def get_radius_error_correlation(
         x_dif_1 = x_dif_0 + (shape[0] - shape_small[0]) % 2
         y_dif_0 = (shape[1] - shape_small[1]) // 2
         y_dif_1 = y_dif_0 + (shape[1] - shape_small[1]) % 2
-        radius = np.load(pair[1]).reshape(shape)[x_dif_0:shape[0]-x_dif_1, y_dif_0:shape[1]-y_dif_1]
+        if use_only_radius:
+            radius = np.load(pair[1]).reshape((shape[0] // 2, shape[1] // 2))
+            radius = cv2.resize(radius, (shape_small[1], shape_small[0]), interpolation = cv2.INTER_LINEAR)
+        else:
+            radius = np.load(pair[1]).reshape(shape)[x_dif_0:shape[0]-x_dif_1, y_dif_0:shape[1]-y_dif_1]
 
         if normalize_radius_map:
             radius = normalize_map(radius)
@@ -240,23 +252,45 @@ if __name__ == "__main__":
     shape = (1280, 1712)
     shape_small = (1273, 1698)
 
-    exp_name = 'S1_v1_yellowx05_calib_colordrift_10_s1x05calib'
-    ds_dir=Path("./data/yellow_x05")
+    model_names_pspnet = [
+        "s1_resnet18_x05_calib",
+        "s1_resnet18_x05_calib_e5",
+        "s1_resnet18_x05_calib_e10"
+    ]
 
-    run_test(
-        ds_dir=ds_dir,
-        out_dir=prepare_experiment(Path("./out"), exp_name=exp_name),
-        device=args.device,
-        exp_name=exp_name
-    )
+    model_names = [
+        "s1_x05_calib",
+        "s1_x05_calib_e5",
+        "s1_x05_calib_e10"
+    ]
 
-    plot_error_heatmaps(ds_dir=ds_dir, exp_name=exp_name, h=10)
+    datasets_names = [
+        "yellow_x05",
+        "pink_x05",
+        "blue_x05"
+    ]
+    
+    for model in model_names:
+        for dataset in datasets_names:
+            exp_name = f'S1_v1_{dataset}_calib_colordrift_10_{model}'
+            ds_dir=Path(f"./data/{dataset}")
 
-    mse_dict, correlation_dict, weighted_correlation_dict = get_radius_error_correlation(ds_dir, exp_name, shape=shape, shape_small=shape_small)
-    print("Not normalized radius map \n MSE = ", mse_dict, "\n Correlation = ", correlation_dict)
-    with open(f'./out/{exp_name}/correlation_dict.json', 'wt') as f:
-        json.dump(correlation_dict, f, indent=4)
-    with open(f'./out/{exp_name}/mse_dict.json', 'wt') as f:
-        json.dump(mse_dict, f, indent=4)
-    with open(f'./out/{exp_name}/weighted_correlation_dict.json', 'wt') as f:
-        json.dump(weighted_correlation_dict, f, indent=4)
+            # run_test(
+            #     ds_dir=ds_dir,
+            #     out_dir=prepare_experiment(Path("./out"), exp_name=exp_name),
+            #     device=args.device,
+            #     exp_name=exp_name,
+            #     model_name=model
+            # )
+
+            # plot_error_heatmaps(ds_dir=ds_dir, exp_name=exp_name, h=10)
+
+            mse_dict, correlation_dict, weighted_correlation_dict = get_radius_error_correlation(
+                ds_dir, exp_name, shape=shape, shape_small=shape_small, use_only_radius=True, normalize_radius_map=True)
+            print("Not normalized radius map \n MSE = ", mse_dict, "\n Correlation = ", correlation_dict)
+            with open(f'./out/{exp_name}/norm_radius_correlation_dict.json', 'wt') as f:
+                json.dump(correlation_dict, f, indent=4)
+            with open(f'./out/{exp_name}/norm_radius_mse_dict.json', 'wt') as f:
+                json.dump(mse_dict, f, indent=4)
+            with open(f'./out/{exp_name}/norm_radius_weighted_correlation_dict.json', 'wt') as f:
+                json.dump(weighted_correlation_dict, f, indent=4)

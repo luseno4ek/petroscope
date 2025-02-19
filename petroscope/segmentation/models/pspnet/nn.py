@@ -5,6 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+import geoopt.manifolds.stereographic.math as gmath
+from PIL import Image
+import matplotlib.pyplot as plt
+from pathlib import Path
+import math
+import numpy as np
+import torch.nn.functional as F
+import cv2
 
 class PyramidPoolingModule(nn.Module):
     def __init__(self, in_channels, pool_sizes):
@@ -101,15 +109,88 @@ class PSPNet(nn.Module):
                     m.stride = (1, 1)
         return layer
 
-    def forward(self, x):
+    def forward(self, x, exp_name = None, image_name = None, build_radius = False):
         h, w = x.shape[2], x.shape[3]
+        print("Initial shape: ", x.shape)
         x = self.layer0(x)
+        print("Layer 0 shape: ", x.shape)
         x = self.layer1(x)
+        print("Layer 1 shape: ", x.shape)
         x = self.layer2(x)
+        print("Layer 2 shape: ", x.shape)
         x = self.layer3(x)
+        print("Layer 3 shape: ", x.shape)
         x = self.layer4(x)
+        print("Layer 4 shape: ", x.shape)
         x = self.psp(x)
-        x = self.final(x)
+        print("PSP shape: ", x.shape)
+        x = self.final[0](x)
+        x = self.final[1](x)
+        x = self.final[2](x)
+        x = self.final[3](x)
+        x_emb = x
+        print("Embedding shape: ", x_emb.shape)
+        print("Final shape: ", x.shape)
+        img = None
+
+        if build_radius:
+            mapper = HyperMapper()
+            x_h = mapper.expmap(x_emb)
+            print('Hyperbolic embeddings: ', x_h.shape)
+            x_h_swapped = torch.swapaxes(x_h, 1, 2)
+            x_h_swapped = torch.swapaxes(x_h_swapped, 2, 3)
+            print('Hyperbolic embeddings swapped: ', x_h_swapped.shape)
+            r_h = mapper.poincare_distance_origin(x_h_swapped)
+            print('Poincare distance: ', r_h.shape)
+            img = r_h.cpu().numpy()
+            img = np.moveaxis(img, 0, -1)
+            img = np.squeeze(img)
+            # img = cv2.resize(img, (w, h), 
+            #    interpolation = cv2.INTER_LINEAR)
+            plt.imshow(img)
+            path = f"./out/{exp_name}/radius"
+            Path(path).mkdir(parents=True, exist_ok=True)
+            plt.axis('off')
+            plt.savefig(f"{path}/{image_name}.png", bbox_inches='tight')
+            np.save(f"{path}/{image_name}_raw.npy", img)
+
         return F.interpolate(
             x, size=(h, w), mode="bilinear", align_corners=True
-        )
+        ), img
+
+
+class HyperMapper(object):
+    """A class to map between euclidean and hyperbolic space and compute distances."""
+
+    def __init__(self, c=1.) -> None:
+        """Initialize the hyperbolic mapper.
+
+        Args:
+            c (float, optional): Hyperbolic curvature. Defaults to 1.0
+        """
+        self.c = c
+        self.K = torch.tensor(-self.c, dtype=float)
+
+    def expmap(self, x, dim=-1):
+        """Exponential mapping from Euclidean to hyperbolic space.
+
+        Args:
+            x (torch.Tensor): Tensor of shape (..., d)
+
+        Returns:
+            torch.Tensor: Tensor of shape (..., d)
+        """
+        x_hyp = gmath.expmap0(x.double(), k=self.K, dim=dim)
+        x_hyp = gmath.project(x_hyp, k=self.K, dim=dim)
+        return x_hyp
+    
+    def poincare_distance_origin(self, x, dim=-1):
+        """Poincare distance between two points in hyperbolic space.
+
+        Args:
+            x (torch.Tensor): Tensor of shape (..., d)
+
+        Returns:
+            torch.Tensor: Tensor of shape (...)
+        """
+        return gmath.dist0(x, k=self.K, dim=dim)

@@ -297,7 +297,7 @@ class ResUNetTorch(GeoSegmModel):
 
     def predict_image(
         self,
-        image: ndarray,
+        image: np.ndarray,
         exp_name = None, image_name = None, build_entropy = False,        
         retutn_logits: bool = True,
     ) -> np.ndarray:
